@@ -46,20 +46,40 @@ function checkIp(ip) {
     // return `http://${ip}/dce/license/check`;
     return axios.get(`http://${ip}/dce/healthz`, { timeout: 2000 })
         .then(res => ({ data: res.data, ip }))
-        .catch(err => ({ data: null, ip }));
+        .catch(() => ({ data: null, ip }));
+}
+
+function getVersions({ data, ip }) {
+    // return axios.get(`http://admin:changeme@${ip}/dce/system/dce-versions`, { timeout: 2000 })
+    return axios.get(`http://${ip}/dce/version`, { timeout: 2000 })
+        .then(res => {
+            return { data, ip, version: res.data.DCEVersion };
+        })
+        .catch(() => ({ data, ip }));
+}
+
+async function getTheUsableIpsVersions(ips) {
+    const ps = [];
+    ips.forEach(ip => {
+        ps.push(getVersions(ip))
+    })
+    const results = await Promise.all(ps);
+    return results;
 }
 
 async function checkAllIps(ips) {
     const ps = [];
     ips.forEach(ip => {
-        ps.push(checkIp(ip).then());
+        ps.push(checkIp(ip));
     });
     const results = await Promise.all(ps);
-    usableResults = results.filter(({ data }) => !!data);
-    return usableResults;
+    usableResults = results.filter(({ data }) => !!data && typeof data === 'object');
+    const res = await getTheUsableIpsVersions(usableResults);
+    return res;
 }
 
 function checkIpHealthy(data) {
+    if (typeof data !== 'object') return;
     const checkMap = {
         Kubernetes: 'Kubernetes',
         SwarmManager: '集群管理 API',
@@ -67,7 +87,7 @@ function checkIpHealthy(data) {
     }
 
     const unhealthyItems = [];
-
+    
     for (let [k, v] of Object.entries(data)) {
         if (v === 'Healthy') continue;
         unhealthyItems.push(checkMap[k]);
@@ -78,14 +98,17 @@ function checkIpHealthy(data) {
 
 function showResults(results) {
     if (!results.length) return console.log('没有可用节点，可以安心的去喝杯茶划划水了！'.red);
-    results.forEach(({ data, ip }) => {
+    results.forEach(({ data, ip, version }) => {
         const unhealthyItems = checkIpHealthy(data);
         if (unhealthyItems.length) {
-            console.log(`${ ip }可用，但是 ${unhealthyItems.join('、')} 挂了`.yellow);
+            console.log(`${ ip } 可用，但是 ${unhealthyItems.join('、')} 挂了`.yellow);
         } else {
-            console.log(`${ ip } Totally 可用，老老实实码代码吧~`.green);
+            const versionInfo = version ? '，DCE 版本是 '.green + version.magenta : '';
+            console.log(ip.blue + ' Totally 可用'.green + versionInfo);
         }
     })
+    console.log('老老实实搬砖吧~'.cyan);
+    console.log()
 }
 
 async function main() {
